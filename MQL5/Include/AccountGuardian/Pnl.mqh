@@ -1,0 +1,559 @@
+//+------------------------------------------------------------------+
+//| AccountGuardian - Pnl.mqh                                        |
+//| Day/week windows, realized + floating, base. SPEC v0.1 sec 4,    |
+//| amended by A6 (Phase 1 PnL core). Read-only: no trade calls in   |
+//| this file, ever. The weekly path lives here precisely so that    |
+//| it is provably unable to trade (SPEC 1, 4.7).                    |
+//+------------------------------------------------------------------+
+#ifndef AG_PNL_MQH
+#define AG_PNL_MQH
+
+#include <AccountGuardian/Clock.mqh>
+//--- For AG_SWEEP_MAGIC (PK-4(c1), 2026-09-28). SweepPolicy.mqh includes
+//--- nothing and carries no trade API, so this pulls in no cycle and no
+//--- trade call, and the weekly path below stays provably unable to trade.
+#include <AccountGuardian/SweepPolicy.mqh>
+
+//+------------------------------------------------------------------+
+//| History-select upper bound: a clock-independent constant, never  |
+//| derived from TimeCurrent, so neither a frozen nor a backward-     |
+//| stepping clock can truncate the window (Phase 0 obligation,      |
+//| discharged here; proof in the plan section 4.3). The MQL5        |
+//| datetime domain ends 3000.12.31; no deal can ever be stamped     |
+//| past this bound for the life of the product.                    |
+//+------------------------------------------------------------------+
+#define AG_HISTORY_SELECT_TO D'3000.01.01'
+
+//+------------------------------------------------------------------+
+//| Flat epsilon, account-currency units (ruling, 2026-07-30).       |
+//| The live breach comparison errs toward breach: total <= -limit + |
+//| epsilon is acceptable.                                            |
+//+------------------------------------------------------------------+
+#define AG_PNL_EPSILON 0.01
+
+//+------------------------------------------------------------------+
+//| Sums one deal's contribution per the ruled formula (Q3 FINAL,    |
+//| 2026-08-08): profit, swap, commission and fee, uniformly over    |
+//| every deal type the caller has already selected.                 |
+//+------------------------------------------------------------------+
+double AgDealValue(const ulong ticket)
+  {
+   return HistoryDealGetDouble(ticket, DEAL_PROFIT)
+        + HistoryDealGetDouble(ticket, DEAL_SWAP)
+        + HistoryDealGetDouble(ticket, DEAL_COMMISSION)
+        + HistoryDealGetDouble(ticket, DEAL_FEE);
+  }
+
+//+------------------------------------------------------------------+
+//| Realized PnL since anchor: DEAL_TYPE_BUY and DEAL_TYPE_SELL      |
+//| deals only (F12 FINAL, the realized whitelist). HistorySelect's  |
+//| own inclusive-from semantics already match the Q4 boundary       |
+//| ruling (DEAL_TIME >= anchor counts to the new day), so no        |
+//| separate comparison is needed. HistorySelect returning false is  |
+//| a loud stability failure and is never read as zero deals (F6):   |
+//| ok is set false and the caller must not use the return value.    |
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| THE ONE REPLAY (Phase 2 Stage 4, design doc items 1 and 3).      |
+//| Single fold over the whitelisted deals since the anchor,         |
+//| returning BOTH the realized sum and the running minimum of the   |
+//| cumulative realized. AgRealized and the derived lock witness are |
+//| the two callers, so the F12 whitelist and the Q3 per-deal        |
+//| formula exist once here and cannot drift between them, which is  |
+//| the whole reason this is a shared helper rather than a second    |
+//| loop written beside the first.                                   |
+//|                                                                  |
+//| running_min is M_n from design item 3: M_0 = 0 and               |
+//| M_k = min(M_{k-1}, R_k), monotonically non-increasing. Once the  |
+//| cumulative dips below -limit it STAYS below, no matter what      |
+//| later deals do to the final total. That is what makes a realized |
+//| loss survive a recovery: a check on current PnL alone sees the   |
+//| recovered total and no breach, while the running minimum still   |
+//| carries the dip.                                                 |
+//|                                                                  |
+//| ORDER MATTERS HERE AND ONLY HERE. A sum is order-independent, a  |
+//| running minimum is not, so the deals are sorted (DEAL_TIME,      |
+//| DEAL_TICKET) ascending per design item 1's tiebreak before the   |
+//| fold; ticket assignment reflects true broker-side sequencing     |
+//| when wall-clock seconds tie, and an intra-second dip is exactly  |
+//| the case where transient ordering changes whether it is visible. |
+//| MQL5 does not document HistoryDealGetTicket's order, so it is    |
+//| established here rather than assumed. Insertion sort is O(n^2)   |
+//| and deliberate: this runs at boot only, never per tick, and n is |
+//| one day's deals on one account.                                  |
+//|                                                                  |
+//| Failure discipline is unchanged from Phase 1 (F6): a false       |
+//| HistorySelect is a stability failure, never zero deals.          |
+//|                                                                  |
+//| VERSION 1 OF THE REALIZED PEAK TRAILING FLOOR (D1.1, D1.3 FINAL  |
+//| 2026-08-24) ADDS running_max TO THIS SAME WALK. It is P_n, the   |
+//| mirror of M_n: P_0 = 0 and P_k = max(P_{k-1}, R_k), monotonically|
+//| non-decreasing. Only closed deals move it, which is D1.1 exactly:|
+//| this fold sees the F12 whitelist of closures and nothing else, so|
+//| floating profit cannot reach it by any path. It resets by the    |
+//| WINDOW MOVING and never by an action: when the anchor advances,  |
+//| the walk starts again from R_0 = 0 and P_0 = 0 by construction   |
+//| (D3.2, whose Reason states it in exactly those terms).           |
+//| max_ticket and max_time name the deal that last raised P_k and   |
+//| are what the `realized peak raised` journal line reports; both   |
+//| stay 0 while the running maximum has never left 0.               |
+//|                                                                  |
+//| NO SECOND WALK EXISTS TO ADD. The running maximum comes out of   |
+//| the SAME sorted fold that already produces the running minimum,  |
+//| which is what keeps the defect 3 shape 1 FINAL of 2026-08-20     |
+//| satisfied in letter: AgRealizedFold below keeps its frozen       |
+//| signature and its two outputs and is now a forwarder onto this.  |
+//|                                                                  |
+//| The rise test here is a plain >, deliberately, and the epsilon   |
+//| band belongs one level up in AgPeakUpdate. Both operands here    |
+//| are doubles produced by this same fold in this same pass, so no  |
+//| round trip through storage exists for an exact comparison to     |
+//| trip on; the persisted peak, which HAS been through              |
+//| DoubleToString and back, is compared under AG_PNL_EPSILON where  |
+//| it is read. That is the split the ratchet epsilon FINAL of       |
+//| 2026-08-18 draws, and it is why running_min beside it is a plain |
+//| < and always has been.                                           |
+//|                                                                  |
+//| PK BUILD, THE FOURTH WITNESS (rulings PK-1(c), PK-4(c1)          |
+//| and PK-10(a) of 2026-09-28, and the build rulings of the same    |
+//| date). This same walk reads DEAL_MAGIC once per deal and reports |
+//| the latest deal carrying AG_SWEEP_MAGIC, its DEAL_TIME in        |
+//| sweep_time and its ticket in sweep_ticket, both 0 when today has |
+//| none. Every close the sweep sends carries that magic, is sent    |
+//| only while LOCKED, and is a BUY or SELL deal inside the F12      |
+//| whitelist, so it is already in this walk; the boot derivation    |
+//| reads it as server side evidence of a lock today. The deals are  |
+//| sorted, so the last match in the fold is the latest by           |
+//| (DEAL_TIME, DEAL_TICKET). NO SECOND WALK AND NO FURTHER HISTORY  |
+//| READ: one more integer read per deal, the ticket already in      |
+//| hand. The six-output signature below this function stays byte    |
+//| identical as a forwarder onto it, the shape AgRealizedFold took  |
+//| at version 1, which is what keeps AgRealizedFold beneath it byte |
+//| identical.                                                       |
+//+------------------------------------------------------------------+
+double AgRealizedRunFold(const datetime anchor, bool &ok, double &running_min,
+                         double &running_max, ulong &max_ticket, datetime &max_time,
+                         datetime &sweep_time, ulong &sweep_ticket)
+  {
+   ok          = true;
+   running_min = 0.0;
+   running_max = 0.0;
+   max_ticket  = 0;
+   max_time    = 0;
+   sweep_time  = 0;
+   sweep_ticket = 0;
+   if(!HistorySelect(anchor, AG_HISTORY_SELECT_TO))
+     {
+      ok = false;
+      AgWarn("HistorySelect failed for the realized window, anchor="
+             + TimeToString(anchor, TIME_DATE | TIME_SECONDS)
+             + ": treated as a stability failure, never as zero deals");
+      return 0.0;
+     }
+
+   //--- collect the whitelisted deals first, so the fold can run in order
+   ulong    tickets[];
+   datetime times[];
+   int      n     = 0;
+   int      total = HistoryDealsTotal();
+   ArrayResize(tickets, total);
+   ArrayResize(times,   total);
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      long type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      if(type != DEAL_TYPE_BUY && type != DEAL_TYPE_SELL)   // F12 whitelist
+         continue;
+      tickets[n] = ticket;
+      times[n]   = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      n++;
+     }
+
+   //--- (DEAL_TIME, DEAL_TICKET) ascending, insertion sort
+   for(int i = 1; i < n; i++)
+     {
+      ulong    kt = tickets[i];
+      datetime km = times[i];
+      int      j  = i - 1;
+      while(j >= 0 && (times[j] > km || (times[j] == km && tickets[j] > kt)))
+        {
+         tickets[j + 1] = tickets[j];
+         times[j + 1]   = times[j];
+         j--;
+        }
+      tickets[j + 1] = kt;
+      times[j + 1]   = km;
+     }
+
+   double cumulative = 0.0;
+   for(int i = 0; i < n; i++)
+     {
+      cumulative += AgDealValue(tickets[i]);   // Q3 per-deal formula
+      if(cumulative < running_min)
+         running_min = cumulative;
+      if(cumulative > running_max)
+        {
+         running_max = cumulative;
+         max_ticket  = tickets[i];
+         max_time    = times[i];
+        }
+      //--- PK-4(c1): the one further read per deal. Sorted ascending, so the
+      //--- last match is the latest AG_SWEEP_MAGIC deal of the day.
+      if(HistoryDealGetInteger(tickets[i], DEAL_MAGIC) == AG_SWEEP_MAGIC)
+        {
+         sweep_time   = times[i];
+         sweep_ticket = tickets[i];
+        }
+     }
+   return cumulative;
+  }
+
+//+------------------------------------------------------------------+
+//| The six-output signature, byte identical, now a forwarder that   |
+//| discards the two PK outputs, the shape AgRealizedFold took at    |
+//| version 1 (ruling (a) of 2026-09-28 on point 1 of the PK         |
+//| build stop). AgRealizedFold below calls it unchanged; every      |
+//| figure it has ever produced is reproduced, the walk underneath   |
+//| being the identical walk with two further out parameters.        |
+//+------------------------------------------------------------------+
+double AgRealizedRunFold(const datetime anchor, bool &ok, double &running_min,
+                         double &running_max, ulong &max_ticket, datetime &max_time)
+  {
+   datetime discard_sweep_time   = 0;
+   ulong    discard_sweep_ticket = 0;
+   return AgRealizedRunFold(anchor, ok, running_min, running_max, max_ticket, max_time,
+                            discard_sweep_time, discard_sweep_ticket);
+  }
+
+//+------------------------------------------------------------------+
+//| Phase 2's two-output fold, FROZEN in signature and in its two    |
+//| outputs by the defect 3 shape 1 FINAL of 2026-08-20 and left     |
+//| exactly that way here: a forwarder that discards the version 1   |
+//| outputs. Every figure it has ever produced is reproduced, the    |
+//| walk underneath being the identical walk with three further out  |
+//| parameters written to.                                           |
+//+------------------------------------------------------------------+
+double AgRealizedFold(const datetime anchor, bool &ok, double &running_min)
+  {
+   double   discard_max    = 0.0;
+   ulong    discard_ticket = 0;
+   datetime discard_time   = 0;
+   return AgRealizedRunFold(anchor, ok, running_min,
+                            discard_max, discard_ticket, discard_time);
+  }
+
+//+------------------------------------------------------------------+
+//| Phase 1's realized sum, unchanged in behaviour: it is the same   |
+//| fold with the running minimum discarded. Sorting cannot change a |
+//| sum, so every Phase 1 figure this function has ever produced is  |
+//| reproduced exactly.                                              |
+//+------------------------------------------------------------------+
+double AgRealized(const datetime anchor, bool &ok)
+  {
+   double discard_min = 0.0;
+   return AgRealizedFold(anchor, ok, discard_min);
+  }
+
+//+------------------------------------------------------------------+
+//| PK BUILD, THE TWO PURE PARTS the boot derivation's two new       |
+//| witnesses rest on, placed here and not in the EA so the vectors  |
+//| script reaches them through Persist.mqh, the ruling C precedent  |
+//| of 2026-08-18 applied once more (item 4 of the build instruction |
+//| of 2026-09-28).                                                  |
+//|                                                                  |
+//| THE LIVE PEAK DISJUNCT (PK-3(b1)). Realized plus floating now at |
+//| or below the day's realized high water mark, reconstructed by    |
+//| the fold above, less the comparison limit, the flat 2026-07-30   |
+//| epsilon erring toward breach. It reads realized figures only for |
+//| its level, per D5, and compares full equity against it, per      |
+//| D1.2. running_max never sits below zero, so this reads true      |
+//| wherever the live loss disjunct does, the peak level never       |
+//| sitting below the ratchet level, which is the chosen field's own |
+//| invariant.                                                       |
+//+------------------------------------------------------------------+
+bool AgPeakLiveDisjunct(const double realized, const double floating,
+                        const double running_max, const double limit_cmp)
+  {
+   return (realized + floating <= running_max - limit_cmp + AG_PNL_EPSILON);
+  }
+
+//+------------------------------------------------------------------+
+//| THE SWEEP WITNESS'S EXPIRY (PK-4(c1)). The next day anchor after |
+//| the deal's own DEAL_TIME, floored at the Q8 latch exactly as     |
+//| every value the guardian computes for itself is (ruling FOUR, no |
+//| clamp). A deal from today always lands tomorrow's anchor, later  |
+//| than now, so a lock entered on it cannot expire on the tick it   |
+//| is entered. Ruling THREE's longer expiry is not recoverable from |
+//| a deal time and is not claimed.                                  |
+//+------------------------------------------------------------------+
+datetime AgSweepWitnessUntil(const datetime deal_time)
+  {
+   return AgApplyLatchFloor(AgNextDayAnchor(deal_time));
+  }
+
+//+------------------------------------------------------------------+
+//| Sum of ALL deals since anchor, trading and balance types alike   |
+//| (Q2 FINAL, the day-base identity). Same failure discipline as    |
+//| AgRealized. Runs its own HistorySelect: MQL5 history selection   |
+//| is a single active window, so this call re-selects rather than   |
+//| trusting a prior AgRealized selection to still be active.        |
+//+------------------------------------------------------------------+
+double AgDealsSumAll(const datetime anchor, bool &ok)
+  {
+   ok = true;
+   if(!HistorySelect(anchor, AG_HISTORY_SELECT_TO))
+     {
+      ok = false;
+      AgWarn("HistorySelect failed for the day-base window, anchor="
+             + TimeToString(anchor, TIME_DATE | TIME_SECONDS)
+             + ": treated as a stability failure, never as zero deals");
+      return 0.0;
+     }
+   double sum = 0.0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      sum += AgDealValue(ticket);
+     }
+   return sum;
+  }
+
+//+------------------------------------------------------------------+
+//| Day-anchor base: current Balance minus every deal since anchor,  |
+//| reconstructed live, never cached (Q2 FINAL). Deposits and        |
+//| withdrawals cancel out of this identity by construction: a       |
+//| deposit raises Balance and raises the all-deals sum by the same  |
+//| amount, so Base is unchanged (deposit/withdrawal neutrality,     |
+//| Q5, PASS-BY-CONSTRUCTION on the withdrawal side).                 |
+//+------------------------------------------------------------------+
+double AgDayBase(const datetime anchor, bool &ok)
+  {
+   double all_deals = AgDealsSumAll(anchor, ok);
+   if(!ok)
+      return 0.0;
+   return AccountInfoDouble(ACCOUNT_BALANCE) - all_deals;
+  }
+
+//+------------------------------------------------------------------+
+//| Floating PnL over every open position (F11 FINAL: a position     |
+//| carried across the rollover counts its floating loss against     |
+//| the day it is still open on).                                    |
+//+------------------------------------------------------------------+
+double AgFloating()
+  {
+   double sum = 0.0;
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+     {
+      //--- PositionGetTicket(i) both returns the ticket AND selects that
+      //--- position for the PositionGetDouble calls below (MQL5 semantics,
+      //--- same pattern as HistoryDealGetTicket). PositionsTotal() can
+      //--- shrink between this call and the loop's start if a position
+      //--- closes mid-iteration, and PositionGetTicket then legitimately
+      //--- returns 0 for the now-stale index; skipping it is correct, not
+      //--- a bug to "fix" into a re-fetch or an index-shift correction.
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      sum += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+     }
+   return sum;
+  }
+
+//+------------------------------------------------------------------+
+//| R10, D1f (FINAL 2026-09-03). Both limits are mandatory list      |
+//| inputs. THE BACKING INTEGER IS THE VALUE: percent in hundredths, |
+//| currency in whole units. The member comment is the dialog text.  |
+//| Defaults FINAL 2026-09-03: the top value of each list.           |
+//+------------------------------------------------------------------+
+enum ENUM_AG_DAILY_LOSS_PERCENT
+  {
+   AG_DLP_0_25 =  25, // 0.25
+   AG_DLP_0_50 =  50, // 0.50
+   AG_DLP_0_75 =  75, // 0.75
+   AG_DLP_1_00 = 100, // 1.00
+   AG_DLP_1_25 = 125, // 1.25
+   AG_DLP_1_50 = 150, // 1.50
+   AG_DLP_1_75 = 175, // 1.75
+   AG_DLP_2_00 = 200, // 2.00
+   AG_DLP_2_25 = 225, // 2.25
+   AG_DLP_2_50 = 250, // 2.50
+   AG_DLP_2_75 = 275, // 2.75
+   AG_DLP_3_00 = 300, // 3.00
+   AG_DLP_3_25 = 325, // 3.25
+   AG_DLP_3_50 = 350, // 3.50
+   AG_DLP_3_75 = 375, // 3.75
+   AG_DLP_4_00 = 400, // 4.00
+   AG_DLP_4_25 = 425, // 4.25
+   AG_DLP_4_50 = 450, // 4.50
+   AG_DLP_4_75 = 475, // 4.75
+   AG_DLP_5_00 = 500, // 5.00
+   AG_DLP_5_25 = 525, // 5.25
+   AG_DLP_5_50 = 550  // 5.50
+  };
+
+enum ENUM_AG_DAILY_LOSS_CURRENCY
+  {
+   AG_DLC_1   =   1, // 1
+   AG_DLC_2   =   2, // 2
+   AG_DLC_3   =   3, // 3
+   AG_DLC_4   =   4, // 4
+   AG_DLC_5   =   5, // 5
+   AG_DLC_6   =   6, // 6
+   AG_DLC_7   =   7, // 7
+   AG_DLC_8   =   8, // 8
+   AG_DLC_9   =   9, // 9
+   AG_DLC_10  =  10, // 10
+   AG_DLC_15  =  15, // 15
+   AG_DLC_20  =  20, // 20
+   AG_DLC_25  =  25, // 25
+   AG_DLC_30  =  30, // 30
+   AG_DLC_35  =  35, // 35
+   AG_DLC_40  =  40, // 40
+   AG_DLC_45  =  45, // 45
+   AG_DLC_50  =  50, // 50
+   AG_DLC_55  =  55, // 55
+   AG_DLC_60  =  60, // 60
+   AG_DLC_65  =  65, // 65
+   AG_DLC_70  =  70, // 70
+   AG_DLC_75  =  75, // 75
+   AG_DLC_80  =  80, // 80
+   AG_DLC_85  =  85, // 85
+   AG_DLC_90  =  90, // 90
+   AG_DLC_95  =  95, // 95
+   AG_DLC_100 = 100, // 100
+   AG_DLC_105 = 105, // 105
+   AG_DLC_110 = 110, // 110
+   AG_DLC_115 = 115, // 115
+   AG_DLC_120 = 120, // 120
+   AG_DLC_125 = 125, // 125
+   AG_DLC_130 = 130, // 130
+   AG_DLC_135 = 135, // 135
+   AG_DLC_140 = 140, // 140
+   AG_DLC_145 = 145, // 145
+   AG_DLC_150 = 150, // 150
+   AG_DLC_155 = 155, // 155
+   AG_DLC_160 = 160, // 160
+   AG_DLC_165 = 165, // 165
+   AG_DLC_170 = 170, // 170
+   AG_DLC_175 = 175, // 175
+   AG_DLC_180 = 180, // 180
+   AG_DLC_185 = 185, // 185
+   AG_DLC_190 = 190, // 190
+   AG_DLC_195 = 195, // 195
+   AG_DLC_200 = 200  // 200
+  };
+
+//--- Membership, arithmetic on the raw integer and never on the enum
+//--- type, because the terminal can hand OnInit any integer through a
+//--- .set file or a stale chart profile (D1f names all three channels).
+bool AgDailyLossPercentIsMember(const int raw)
+  {
+   return raw >= 25 && raw <= 550 && (raw % 25) == 0;
+  }
+
+bool AgDailyLossCurrencyIsMember(const int raw)
+  {
+   if(raw >= 1 && raw <= 10)
+      return true;
+   return raw >= 15 && raw <= 200 && (raw % 5) == 0;
+  }
+
+//--- Mapping to the double the limit arithmetic consumes. Every percent
+//--- member is a multiple of 0.25 and every currency member an integer,
+//--- so both mappings are exact in binary and DoubleToString(x, 2)
+//--- reproduces the dialog text.
+double AgDailyLossPercentValue(const ENUM_AG_DAILY_LOSS_PERCENT v)
+  {
+   return ((double)(int)v) / 100.0;
+  }
+
+double AgDailyLossCurrencyValue(const ENUM_AG_DAILY_LOSS_CURRENCY v)
+  {
+   return (double)(int)v;
+  }
+
+//+------------------------------------------------------------------+
+//| Stricter of the two limit legs, min over enabled candidates only |
+//| (Q8 of the original architecture review, naive-min trap avoided: |
+//| a disabled leg, 0, never wins as "smallest"). R10, D1f (FINAL    |
+//| 2026-09-03): both legs are mandatory list inputs, so from the EA |
+//| only the has_percent && has_currency branch is live and the two  |
+//| disabled-leg branches are unreachable. They stay because         |
+//| AgPhase2StateVectors.mq5 still calls this with a zero currency   |
+//| literal. BODY UNCHANGED.                                         |
+//+------------------------------------------------------------------+
+double AgLimitCurrency(const double base, const double percent, const double currency)
+  {
+   bool has_percent  = (percent > 0.0);
+   bool has_currency = (currency > 0.0);
+   double from_percent = has_percent ? (base * percent / 100.0) : 0.0;
+   if(has_percent && has_currency)
+      return MathMin(from_percent, currency);
+   if(has_percent)
+      return from_percent;
+   return currency;
+  }
+
+//+------------------------------------------------------------------+
+//| SYNCING exit gate: required_polls consecutive stable, connected  |
+//| polls of HistoryDealsTotal(). Resets on any count change or on   |
+//| disconnection, per the design doc's stability-counter rule.      |
+//+------------------------------------------------------------------+
+int  g_ag_stable_polls       = 0;
+long g_ag_last_history_total = -1;
+
+bool AgHistoryStable(const int required_polls)
+  {
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+     {
+      g_ag_stable_polls       = 0;
+      g_ag_last_history_total = -1;
+      return false;
+     }
+   if(!HistorySelect(0, AG_HISTORY_SELECT_TO))
+     {
+      g_ag_stable_polls = 0;
+      AgWarn("HistorySelect failed during the SYNCING stability poll: stability counter reset");
+      return false;
+     }
+   long total = HistoryDealsTotal();
+   if(total != g_ag_last_history_total)
+     {
+      g_ag_last_history_total = total;
+      g_ag_stable_polls       = 1;
+     }
+   else
+      g_ag_stable_polls++;
+   return g_ag_stable_polls >= required_polls;
+  }
+
+//+------------------------------------------------------------------+
+//| Limit-input validation, core config class (Q4 FINAL, D1f FINAL   |
+//| 2026-09-03). Malformed is one thing only: not a member of the    |
+//| input's own list. Checked PER RAW INPUT AT INIT (D6a). Caller    |
+//| returns INIT_PARAMETERS_INCORRECT.                               |
+//+------------------------------------------------------------------+
+bool AgValidateLimits(const int percent_raw, const int currency_raw, string &why)
+  {
+   if(!AgDailyLossPercentIsMember(percent_raw))
+     {
+      why = "DailyLossPercent is not a list member (raw " + (string)percent_raw
+            + "); the list is 0.25 to 5.50 in steps of 0.25, stored as hundredths 25 to 550";
+      return false;
+     }
+   if(!AgDailyLossCurrencyIsMember(currency_raw))
+     {
+      why = "DailyLossCurrency is not a list member (raw " + (string)currency_raw
+            + "); the list is 1 to 10 in steps of 1, then 15 to 200 in steps of 5";
+      return false;
+     }
+   return true;
+  }
+
+#endif // AG_PNL_MQH

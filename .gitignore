@@ -1,0 +1,4 @@
+# Build output and the installer's own run files
+*.ex5
+installer/install-log.txt
+installer/compile.log
