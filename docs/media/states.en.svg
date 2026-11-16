@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" font-family="Arial, Helvetica, sans-serif">
+  <title>Three states: active, locked, unlocked at 01:00</title>
+  <defs>
+    <marker id="head" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M900,0 L890,5 L900,10 z" fill="#57606a"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="898" height="298" rx="14" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/>
+  <text x="450" y="42" text-anchor="middle" font-size="24" font-weight="bold" fill="#1f2328">Three states</text>
+
+  <rect x="40" y="80" width="200" height="120" rx="12" fill="#dff5e3" stroke="#2e7d32" stroke-width="3"/>
+  <text x="140" y="127" text-anchor="middle" font-size="28" font-weight="bold" fill="#1b5e20">Active</text>
+  <text x="140" y="160" text-anchor="middle" font-size="16" fill="#1f2328">Measures every second</text>
+  <text x="140" y="182" text-anchor="middle" font-size="16" fill="#1f2328">Realized + floating</text>
+
+  <rect x="350" y="80" width="200" height="120" rx="12" fill="#fde2e1" stroke="#c62828" stroke-width="3"/>
+  <text x="450" y="127" text-anchor="middle" font-size="28" font-weight="bold" fill="#b71c1c">Locked</text>
+  <text x="450" y="160" text-anchor="middle" font-size="16" fill="#1f2328">Closes every position</text>
+  <text x="450" y="182" text-anchor="middle" font-size="16" fill="#1f2328">Deletes pending orders</text>
+
+  <rect x="660" y="80" width="200" height="120" rx="12" fill="#e3eefc" stroke="#1565c0" stroke-width="3"/>
+  <text x="760" y="127" text-anchor="middle" font-size="28" font-weight="bold" fill="#0d47a1">Unlocked</text>
+  <text x="760" y="160" text-anchor="middle" font-size="16" fill="#1f2328">at 01:00</text>
+  <text x="760" y="182" text-anchor="middle" font-size="16" fill="#1f2328">server time</text>
+
+  <line x1="246" y1="140" x2="340" y2="140" stroke="#57606a" stroke-width="3" marker-end="url(#head)"/>
+  <text x="295" y="126" text-anchor="middle" font-size="15" fill="#57606a">Limit hit</text>
+
+  <line x1="556" y1="140" x2="650" y2="140" stroke="#57606a" stroke-width="3" marker-end="url(#head)"/>
+  <text x="605" y="126" text-anchor="middle" font-size="15" fill="#57606a">Time is up</text>
+
+  <path d="M760,206 L760,248 L140,248 L140,212" fill="none" stroke="#57606a" stroke-width="3" marker-end="url(#head)"/>
+  <text x="450" y="276" text-anchor="middle" font-size="16" fill="#57606a">A new trading day starts</text>
+</svg>

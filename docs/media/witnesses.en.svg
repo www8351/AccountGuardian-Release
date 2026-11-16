@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 340" width="900" height="340" font-family="Arial, Helvetica, sans-serif">
+  <title>Four witnesses checked at every start</title>
+  <defs>
+    <marker id="head" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M900,0 L890,5 L900,10 z" fill="#57606a"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="898" height="338" rx="14" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/>
+  <text x="450" y="42" text-anchor="middle" font-size="24" font-weight="bold" fill="#1f2328">Four witnesses at every start</text>
+
+  <rect x="20" y="70" width="190" height="120" rx="12" fill="#ffffff" stroke="#57606a" stroke-width="2"/>
+  <text x="115" y="112" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2328">State file</text>
+  <text x="115" y="142" text-anchor="middle" font-size="15" fill="#1f2328">On the computer</text>
+
+  <rect x="230" y="70" width="190" height="120" rx="12" fill="#ffffff" stroke="#57606a" stroke-width="2"/>
+  <text x="325" y="112" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2328">Global variable</text>
+  <text x="325" y="142" text-anchor="middle" font-size="15" fill="#1f2328">In the terminal</text>
+
+  <rect x="440" y="70" width="190" height="120" rx="12" fill="#e3eefc" stroke="#1565c0" stroke-width="2"/>
+  <text x="535" y="112" text-anchor="middle" font-size="20" font-weight="bold" fill="#0d47a1">Deal history</text>
+  <text x="535" y="142" text-anchor="middle" font-size="15" fill="#1f2328">On the broker server</text>
+  <text x="535" y="168" text-anchor="middle" font-size="15" fill="#1f2328">Not erasable locally</text>
+
+  <rect x="650" y="70" width="190" height="120" rx="12" fill="#e3eefc" stroke="#1565c0" stroke-width="2"/>
+  <text x="745" y="112" text-anchor="middle" font-size="20" font-weight="bold" fill="#0d47a1">Guard's closes</text>
+  <text x="745" y="142" text-anchor="middle" font-size="15" fill="#1f2328">On the broker server</text>
+  <text x="745" y="168" text-anchor="middle" font-size="15" fill="#1f2328">Not erasable locally</text>
+
+  <line x1="115" y1="194" x2="115" y2="244" stroke="#57606a" stroke-width="3" marker-end="url(#head)"/>
+  <line x1="325" y1="194" x2="325" y2="244" stroke="#57606a" stroke-width="3" marker-end="url(#head)"/>
+  <line x1="535" y1="194" x2="535" y2="244" stroke="#57606a" stroke-width="3" marker-end="url(#head)"/>
+  <line x1="745" y1="194" x2="745" y2="244" stroke="#57606a" stroke-width="3" marker-end="url(#head)"/>
+
+  <rect x="20" y="252" width="820" height="64" rx="12" fill="#fde2e1" stroke="#c62828" stroke-width="3"/>
+  <text x="430" y="292" text-anchor="middle" font-size="21" font-weight="bold" fill="#b71c1c">One is enough to lock. The strictest wins.</text>
+</svg>

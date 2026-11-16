@@ -28,6 +28,7 @@
 #include <AccountGuardian/AlertQueue.mqh>
 #include <AccountGuardian/AlertJson.mqh>
 #include <AccountGuardian/AlertText.mqh>
+#include <AccountGuardian/AlertTextEn.mqh>
 
 //--- TG-6 as amended by TG-1 (B): entered by the owner when the service is
 //--- added. Optional class (Q4/F9 read onto the service): empty turns the
@@ -35,9 +36,12 @@
 input string TelegramToken       = "";   // Telegram bot token (empty: Telegram off)
 input string TelegramChatId      = "";   // Telegram chat id (empty: Telegram off)
 input string NetworkHeartbeatUrl = "";   // Hosted check ping URL (empty: network heartbeat off)
+//--- the language of every Telegram text, read once at the start: English, the default, or
+//--- Hebrew; a value outside the list reads as English with one WARN, Telegram stays on
+input ENUM_AG_TG_LANGUAGE TelegramLanguage = AG_TG_LANG_ENGLISH;   // Alert language
 
 //--- compile time constants, never inputs (the AG_MUTEX_STALE precedent)
-#define AG_SVC_BUILD_LABEL       "TG"
+#define AG_SVC_BUILD_LABEL       "LANG"
 #define AG_SVC_TIMEOUT_MS        2000   // every request (plan 6.1.4)
 #define AG_SVC_FINAL_TIMEOUT_MS  1500   // the one attempt at a terminal close (TG-13 (B))
 #define AG_SVC_SEND_GAP          3      // seconds between two messages (plan 6.4.5)
@@ -67,6 +71,9 @@ bool     g_svc_ping_on      = false;
 bool     g_svc_cmd_on       = false;
 datetime g_svc_started      = 0;      // local clock
 long     g_svc_login        = -1;
+bool     g_svc_hebrew       = false;   // the language input, read once in OnStart
+string   g_svc_commands[];             // every accepted command text, built in OnStart
+int      g_svc_command_count = 0;
 
 //--- the queue as last read, and the acknowledgement
 long         g_svc_ack          = 0;
@@ -161,6 +168,241 @@ string AgSvcBuildLine()
 
 //--- F9: the build line of a class that carries one, else none
 string AgSvcBuildLineOf(const string cls) { return AgTgCarriesBuild(cls) ? AgSvcBuildLine() : ""; }
+
+//+------------------------------------------------------------------+
+//| THE LANGUAGE SWITCH. Every renderer the service calls goes       |
+//| through one wrapper here, which takes the Hebrew or the English  |
+//| twin by the input TelegramLanguage. The block follows the        |
+//| signatures of AlertText.mqh.                                     |
+//+------------------------------------------------------------------+
+
+string AgSvcTextS1(const AgTgCommon &c, const double percent, const double currency, const double enforced, const string cur)
+  {
+   return g_svc_hebrew ? AgTgTextS1(c, percent, currency, enforced, cur)
+                       : AgTgEnTextS1(c, percent, currency, enforced, cur);
+  }
+
+string AgSvcTextS1Restarted(const AgTgCommon &c, const int reason)
+  {
+   return g_svc_hebrew ? AgTgTextS1Restarted(c, reason)
+                       : AgTgEnTextS1Restarted(c, reason);
+  }
+
+string AgSvcTextS2(const AgTgCommon &c, const int reason)
+  {
+   return g_svc_hebrew ? AgTgTextS2(c, reason)
+                       : AgTgEnTextS2(c, reason);
+  }
+
+string AgSvcTextS3Refused(const AgTgCommon &c)
+  {
+   return g_svc_hebrew ? AgTgTextS3Refused(c)
+                       : AgTgEnTextS3Refused(c);
+  }
+
+string AgSvcTextS3Second(const AgTgCommon &c)
+  {
+   return g_svc_hebrew ? AgTgTextS3Second(c)
+                       : AgTgEnTextS3Second(c);
+  }
+
+string AgSvcTextS3Crash(const AgTgCommon &c, const long chain, const long window_seconds)
+  {
+   return g_svc_hebrew ? AgTgTextS3Crash(c, chain, window_seconds)
+                       : AgTgEnTextS3Crash(c, chain, window_seconds);
+  }
+
+string AgSvcTextS3Persisted(const AgTgCommon &c, const datetime halt_time)
+  {
+   return g_svc_hebrew ? AgTgTextS3Persisted(c, halt_time)
+                       : AgTgEnTextS3Persisted(c, halt_time);
+  }
+
+string AgSvcTextS4(const AgTgCommon &c, const int kind, const datetime until, const double percent, const double currency, const double pnl_at_lock, const long positions, const long pendings, const string cur)
+  {
+   return g_svc_hebrew ? AgTgTextS4(c, kind, until, percent, currency, pnl_at_lock, positions, pendings, cur)
+                       : AgTgEnTextS4(c, kind, until, percent, currency, pnl_at_lock, positions, pendings, cur);
+  }
+
+string AgSvcTextS4Peak(const AgTgCommon &c, const datetime until, const double peak, const double threshold, const double pnl_at_lock, const long positions, const long pendings, const string cur)
+  {
+   return g_svc_hebrew ? AgTgTextS4Peak(c, until, peak, threshold, pnl_at_lock, positions, pendings, cur)
+                       : AgTgEnTextS4Peak(c, until, peak, threshold, pnl_at_lock, positions, pendings, cur);
+  }
+
+string AgSvcTextS5(const AgTgCommon &c, const datetime end, const datetime anchor, const long length, const long positions, const long pendings)
+  {
+   return g_svc_hebrew ? AgTgTextS5(c, end, anchor, length, positions, pendings)
+                       : AgTgEnTextS5(c, end, anchor, length, positions, pendings);
+  }
+
+string AgSvcTextS6C(const AgTgCommon &c, const long closed, const long deleted, const long attempts, const long failures, const long seconds)
+  {
+   return g_svc_hebrew ? AgTgTextS6C(c, closed, deleted, attempts, failures, seconds)
+                       : AgTgEnTextS6C(c, closed, deleted, attempts, failures, seconds);
+  }
+
+string AgSvcTextS6H(const AgTgCommon &c, const ulong ticket, const bool is_order, const int reason, const string symbol, const datetime next_open, const long hard_stop, const long rearm_seconds)
+  {
+   return g_svc_hebrew ? AgTgTextS6H(c, ticket, is_order, reason, symbol, next_open, hard_stop, rearm_seconds)
+                       : AgTgEnTextS6H(c, ticket, is_order, reason, symbol, next_open, hard_stop, rearm_seconds);
+  }
+
+string AgSvcTextS6F(const AgTgCommon &c, const ulong ticket, const bool is_order, const string symbol)
+  {
+   return g_svc_hebrew ? AgTgTextS6F(c, ticket, is_order, symbol)
+                       : AgTgEnTextS6F(c, ticket, is_order, symbol);
+  }
+
+string AgSvcTextS7(const AgTgCommon &c, const ulong ticket, const string symbol, const long attempt)
+  {
+   return g_svc_hebrew ? AgTgTextS7(c, ticket, symbol, attempt)
+                       : AgTgEnTextS7(c, ticket, symbol, attempt);
+  }
+
+string AgSvcTextS8Released(const AgTgCommon &c, const datetime expired, const double new_limit)
+  {
+   return g_svc_hebrew ? AgTgTextS8Released(c, expired, new_limit)
+                       : AgTgEnTextS8Released(c, expired, new_limit);
+  }
+
+string AgSvcTextS8Again(const AgTgCommon &c, const datetime until)
+  {
+   return g_svc_hebrew ? AgTgTextS8Again(c, until)
+                       : AgTgEnTextS8Again(c, until);
+  }
+
+string AgSvcTextS9(const AgTgCommon &c, const long level, const double room)
+  {
+   return g_svc_hebrew ? AgTgTextS9(c, level, room)
+                       : AgTgEnTextS9(c, level, room);
+  }
+
+string AgSvcTextS10(const AgTgCommon &c, const datetime lost, const datetime back, const long gap)
+  {
+   return g_svc_hebrew ? AgTgTextS10(c, lost, back, gap)
+                       : AgTgEnTextS10(c, lost, back, gap);
+  }
+
+string AgSvcTextS11(const AgTgCommon &c, const datetime from_local, const datetime to_local, const long held)
+  {
+   return g_svc_hebrew ? AgTgTextS11(c, from_local, to_local, held)
+                       : AgTgEnTextS11(c, from_local, to_local, held);
+  }
+
+string AgSvcTextS12Blocked(const AgTgCommon &c, const int code)
+  {
+   return g_svc_hebrew ? AgTgTextS12Blocked(c, code)
+                       : AgTgEnTextS12Blocked(c, code);
+  }
+
+string AgSvcTextS12Restored(const AgTgCommon &c)
+  {
+   return g_svc_hebrew ? AgTgTextS12Restored(c)
+                       : AgTgEnTextS12Restored(c);
+  }
+
+string AgSvcTextS14(const AgTgCommon &c, const datetime day_anchor, const double closed_result, const double peak, const long locks, const double new_limit)
+  {
+   return g_svc_hebrew ? AgTgTextS14(c, day_anchor, closed_result, peak, locks, new_limit)
+                       : AgTgEnTextS14(c, day_anchor, closed_result, peak, locks, new_limit);
+  }
+
+string AgSvcTextS15(const AgTgCommon &c)
+  {
+   return g_svc_hebrew ? AgTgTextS15(c)
+                       : AgTgEnTextS15(c);
+  }
+
+string AgSvcTextS16(const AgTgCommon &c, const datetime until, const int reason, const int mask, const long positions, const long pendings, const int restart_reason)
+  {
+   return g_svc_hebrew ? AgTgTextS16(c, until, reason, mask, positions, pendings, restart_reason)
+                       : AgTgEnTextS16(c, until, reason, mask, positions, pendings, restart_reason);
+  }
+
+string AgSvcTextS17(const AgTgCommon &c, const int kind, const int how)
+  {
+   return g_svc_hebrew ? AgTgTextS17(c, kind, how)
+                       : AgTgEnTextS17(c, kind, how);
+  }
+
+string AgSvcTextS18(const AgTgCommon &c, const long seconds)
+  {
+   return g_svc_hebrew ? AgTgTextS18(c, seconds)
+                       : AgTgEnTextS18(c, seconds);
+  }
+
+string AgSvcTextS19Locked(const AgTgCommon &c, const int which, const double percent, const double currency, const double snap, const string cur)
+  {
+   return g_svc_hebrew ? AgTgTextS19Locked(c, which, percent, currency, snap, cur)
+                       : AgTgEnTextS19Locked(c, which, percent, currency, snap, cur);
+  }
+
+string AgSvcTextS19Raise(const AgTgCommon &c, const double live, const double enforced)
+  {
+   return g_svc_hebrew ? AgTgTextS19Raise(c, live, enforced)
+                       : AgTgEnTextS19Raise(c, live, enforced);
+  }
+
+string AgSvcTextS20(const AgTgCommon &c, const long jump)
+  {
+   return g_svc_hebrew ? AgTgTextS20(c, jump)
+                       : AgTgEnTextS20(c, jump);
+  }
+
+string AgSvcTextS21(const AgTgCommon &c)
+  {
+   return g_svc_hebrew ? AgTgTextS21(c)
+                       : AgTgEnTextS21(c);
+  }
+
+string AgSvcTextS22(const AgTgCommon &c, const long seconds, const int why)
+  {
+   return g_svc_hebrew ? AgTgTextS22(c, seconds, why)
+                       : AgTgEnTextS22(c, seconds, why);
+  }
+
+string AgSvcTextS24(const AgTgCommon &c)
+  {
+   return g_svc_hebrew ? AgTgTextS24(c)
+                       : AgTgEnTextS24(c);
+  }
+
+string AgSvcTextS25(const AgTgCommon &c, const int outcome, const datetime end, const datetime until, const int reason)
+  {
+   return g_svc_hebrew ? AgTgTextS25(c, outcome, end, until, reason)
+                       : AgTgEnTextS25(c, outcome, end, until, reason);
+  }
+
+string AgSvcTextStatus(const AgTgCommon &c, const long hb_age, const long data_age, const datetime until)
+  {
+   return g_svc_hebrew ? AgTgTextStatus(c, hb_age, data_age, until)
+                       : AgTgEnTextStatus(c, hb_age, data_age, until);
+  }
+
+string AgSvcTextNotResponding(const AgTgCommon &c, const long seconds, const bool not_recorded, const bool ping_on)
+  {
+   return g_svc_hebrew ? AgTgTextNotResponding(c, seconds, not_recorded, ping_on)
+                       : AgTgEnTextNotResponding(c, seconds, not_recorded, ping_on);
+  }
+
+string AgSvcTextNotRunning(const AgTgCommon &c, const long seconds)
+  {
+   return g_svc_hebrew ? AgTgTextNotRunning(c, seconds)
+                       : AgTgEnTextNotRunning(c, seconds);
+  }
+
+string AgSvcTextRespondsAgain(const AgTgCommon &c, const long gap)
+  {
+   return g_svc_hebrew ? AgTgTextRespondsAgain(c, gap)
+                       : AgTgEnTextRespondsAgain(c, gap);
+  }
+
+string AgSvcFinish(const string text, const long not_kept, const long held_back, const long delay_seconds, const string build_line)
+  {
+   return g_svc_hebrew ? AgTgFinish(text, not_kept, held_back, delay_seconds, build_line)
+                       : AgTgEnFinish(text, not_kept, held_back, delay_seconds, build_line);
+  }
 
 //--- F4: the sign of the account currency, read when a message is rendered
 string AgSvcCurrency() { return AgTgCurrencySign(AccountInfoString(ACCOUNT_CURRENCY)); }
@@ -387,7 +629,7 @@ string AgSvcDedupKey(const AgTgEvent &e)
   }
 
 //+------------------------------------------------------------------+
-//| RENDERING ONE EVENT. The Hebrew is AlertText.mqh's; the figures  |
+//| RENDERING ONE EVENT. The words are the wrappers'; the figures    |
 //| are the event's, the symbol the service's own read.              |
 //+------------------------------------------------------------------+
 string AgSvcRender(const AgTgEvent &e)
@@ -397,61 +639,66 @@ string AgSvcRender(const AgTgEvent &e)
    switch(e.code)
      {
       case AG_TG_S1:
-         return AgTgTextS1(c, e.x[0], e.x[1], e.x[3], AgSvcCurrency());
+         return AgSvcTextS1(c, e.x[0], e.x[1], e.x[3], AgSvcCurrency());
       case AG_TG_S2:
-         return AgTgTextS2(c, (int)e.x[0]);
+         return AgSvcTextS2(c, (int)e.x[0]);
       case AG_TG_S3:
          if((int)e.x[0] == 1)
-            return AgTgTextS3Crash(c, (long)e.x[2], (long)e.x[3]);
-         return AgTgTextS3Persisted(c, (datetime)(long)e.x[1]);
+            return AgSvcTextS3Crash(c, (long)e.x[2], (long)e.x[3]);
+         return AgSvcTextS3Persisted(c, (datetime)(long)e.x[1]);
       case AG_TG_S4:
          if((int)e.x[0] == 4)
-            return AgTgTextS4Peak(c, (datetime)(long)e.x[1], e.x[5], e.x[5] - e.x[2], e.pnl,
+            return AgSvcTextS4Peak(c, (datetime)(long)e.x[1], e.x[5], e.x[5] - e.x[2], e.pnl,
                                   (long)e.x[6], (long)e.x[7], AgSvcCurrency());
-         return AgTgTextS4(c, (int)e.x[0], (datetime)(long)e.x[1], e.x[3], e.x[4], e.pnl,
+         return AgSvcTextS4(c, (int)e.x[0], (datetime)(long)e.x[1], e.x[3], e.x[4], e.pnl,
                            (long)e.x[6], (long)e.x[7], AgSvcCurrency());
+      case AG_TG_S5:
+         return AgSvcTextS5(c, (datetime)(long)e.x[0], (datetime)(long)e.x[1], (long)e.x[2], (long)e.x[3],
+                           (long)e.x[4]);
       case AG_TG_S6C:
-         return AgTgTextS6C(c, (long)e.x[0], (long)e.x[1], (long)e.x[2], (long)e.x[3], (long)e.x[4]);
+         return AgSvcTextS6C(c, (long)e.x[0], (long)e.x[1], (long)e.x[2], (long)e.x[3], (long)e.x[4]);
       case AG_TG_S6H:
-         return AgTgTextS6H(c, (ulong)e.x[0], e.x[1] > 0.5, (int)e.x[2],
+         return AgSvcTextS6H(c, (ulong)e.x[0], e.x[1] > 0.5, (int)e.x[2],
                             AgSvcSymbolOf((ulong)e.x[0], e.x[1] > 0.5), (datetime)(long)e.x[3],
                             AG_SWEEP_HARD_STOP, AG_SWEEP_REARM_PASSES);
       case AG_TG_S6F:
-         return AgTgTextS6F(c, (ulong)e.x[0], e.x[1] > 0.5, AgSvcSymbolOf((ulong)e.x[0], e.x[1] > 0.5));
+         return AgSvcTextS6F(c, (ulong)e.x[0], e.x[1] > 0.5, AgSvcSymbolOf((ulong)e.x[0], e.x[1] > 0.5));
       case AG_TG_S7:
-         return AgTgTextS7(c, (ulong)e.x[0], AgSvcSymbolOf((ulong)e.x[0], false), (long)e.x[1]);
+         return AgSvcTextS7(c, (ulong)e.x[0], AgSvcSymbolOf((ulong)e.x[0], false), (long)e.x[1]);
       case AG_TG_S8:
          if((int)e.x[0] == 1)
-            return AgTgTextS8Released(c, (datetime)(long)e.x[1], e.x[2]);
-         return AgTgTextS8Again(c, (datetime)(long)e.x[1]);
+            return AgSvcTextS8Released(c, (datetime)(long)e.x[1], e.x[2]);
+         return AgSvcTextS8Again(c, (datetime)(long)e.x[1]);
       case AG_TG_S9:
-         return AgTgTextS9(c, (long)e.x[0], e.x[3]);
+         return AgSvcTextS9(c, (long)e.x[0], e.x[3]);
       case AG_TG_S10:
-         return AgTgTextS10(c, (datetime)(long)e.x[0], (datetime)(long)e.x[1], (long)e.x[2]);
+         return AgSvcTextS10(c, (datetime)(long)e.x[0], (datetime)(long)e.x[1], (long)e.x[2]);
       case AG_TG_S12:
          if((int)e.x[0] == 1)
-            return AgTgTextS12Blocked(c, (int)e.x[1]);
-         return AgTgTextS12Restored(c);
+            return AgSvcTextS12Blocked(c, (int)e.x[1]);
+         return AgSvcTextS12Restored(c);
       case AG_TG_S15:
-         return AgTgTextS15(c);
+         return AgSvcTextS15(c);
       case AG_TG_S16:
-         return AgTgTextS16(c, (datetime)(long)e.x[1], (int)e.x[0], (int)e.x[2], (long)e.x[4], (long)e.x[5], -1);
+         return AgSvcTextS16(c, (datetime)(long)e.x[1], (int)e.x[0], (int)e.x[2], (long)e.x[4], (long)e.x[5], -1);
       case AG_TG_S17:
-         return AgTgTextS17(c, (int)e.x[0], (int)e.x[1]);
+         return AgSvcTextS17(c, (int)e.x[0], (int)e.x[1]);
       case AG_TG_S18:
-         return AgTgTextS18(c, (long)e.x[0]);
+         return AgSvcTextS18(c, (long)e.x[0]);
       case AG_TG_S19:
          if((int)e.x[0] == 1)
-            return AgTgTextS19Locked(c, (int)e.x[4], e.x[1], e.x[3], e.x[2], AgSvcCurrency());
-         return AgTgTextS19Raise(c, e.x[1], e.x[2]);
+            return AgSvcTextS19Locked(c, (int)e.x[4], e.x[1], e.x[3], e.x[2], AgSvcCurrency());
+         return AgSvcTextS19Raise(c, e.x[1], e.x[2]);
       case AG_TG_S20:
-         return AgTgTextS20(c, (long)e.x[2]);
+         return AgSvcTextS20(c, (long)e.x[2]);
       case AG_TG_S21:
-         return AgTgTextS21(c);
+         return AgSvcTextS21(c);
       case AG_TG_S22:
-         return AgTgTextS22(c, (long)e.x[0], (int)e.x[1]);
+         return AgSvcTextS22(c, (long)e.x[0], (int)e.x[1]);
       case AG_TG_S24:
-         return AgTgTextS24(c);
+         return AgSvcTextS24(c);
+      case AG_TG_S25:
+         return AgSvcTextS25(c, (int)e.x[0], (datetime)(long)e.x[1], (datetime)(long)e.x[2], (int)e.x[3]);
      }
    return "";
   }
@@ -468,6 +715,14 @@ bool AgSvcInPlace(const AgTgEvent &e)
 //--- one event to a waiting message, or suppressed, or merged
 void AgSvcConvertOne(const AgTgEvent &e, const datetime now, const long not_kept)
   {
+   //--- ML-35 (1): a stop for a chart timeframe or symbol change, reason 3,
+   //--- is acknowledged and sends nothing; this build's EA queues none, a
+   //--- queue an earlier build wrote may hold one
+   if(e.code == AG_TG_S2 && AgTgSilentReason((int)e.x[0]))
+     {
+      AgSvcAdvance(e.seq);
+      return;
+     }
    string cls = AgTgCodeText(e.code);
    string key = AgSvcDedupKey(e);
    if(key != "" && AgSvcSuppressed(cls, key, now))
@@ -475,7 +730,7 @@ void AgSvcConvertOne(const AgTgEvent &e, const datetime now, const long not_kept
       AgSvcAdvance(e.seq);
       return;
      }
-   if(e.code == AG_TG_S4 || e.code == AG_TG_S16)
+   if(e.code == AG_TG_S4 || e.code == AG_TG_S16 || e.code == AG_TG_S5)
      {
       ArrayResize(g_svc_lock_times, g_svc_lock_count + 1);
       g_svc_lock_times[g_svc_lock_count] = e.server_t;
@@ -487,18 +742,26 @@ void AgSvcConvertOne(const AgTgEvent &e, const datetime now, const long not_kept
 //--- the held stop and the start that follows it, one restarted message
 void AgSvcMerge(const AgTgEvent &stop, const AgTgEvent &start)
   {
+   //--- ML-35 (1): a reason 3 stop merges into nothing; the stop and its
+   //--- start are both acknowledged without a message, and no lock is counted
+   if(AgTgSilentReason((int)stop.x[0]))
+     {
+      AgSvcAdvance(stop.seq);
+      AgSvcConsume(start.seq);
+      return;
+     }
    AgTgCommon c;
    AgSvcCommonFromEvent(start, c);
    string text;
    string cls;
    if(start.code == AG_TG_S1)
      {
-      text = AgTgTextS1Restarted(c, (int)stop.x[0]);
+      text = AgSvcTextS1Restarted(c, (int)stop.x[0]);
       cls  = "S2+S1";
      }
    else
      {
-      text = AgTgTextS16(c, (datetime)(long)start.x[1], (int)start.x[0], (int)start.x[2],
+      text = AgSvcTextS16(c, (datetime)(long)start.x[1], (int)start.x[0], (int)start.x[2],
                          (long)start.x[4], (long)start.x[5], (int)stop.x[0]);
       cls  = "S2+S16";
       ArrayResize(g_svc_lock_times, g_svc_lock_count + 1);
@@ -581,7 +844,7 @@ void AgSvcSummary(const long old_anchor, const long new_anchor, const double old
          locks++;
    AgTgCommon c;
    AgSvcCommonNow(c, true);
-   AgSvcEnqueue(AgTgTextS14(c, (datetime)old_anchor, from_old - from_new, old_peak, locks,
+   AgSvcEnqueue(AgSvcTextS14(c, (datetime)old_anchor, from_old - from_new, old_peak, locks,
                             g_svc_snap.enforced_limit),
                 "S14", 0, 0, (long)TimeLocal(), 0, 0);
   }
@@ -680,7 +943,7 @@ void AgSvcLiveness(const int live, const double hb, const double id, const datet
             AgTgCommon c;
             AgSvcCommonNow(c, true);
             if(!AgSvcSuppressed("LIVE_BACK", "LIVE_BACK", now))
-               AgSvcEnqueue(AgTgTextRespondsAgain(c, (long)(now - g_svc_live_since)), "LIVE_BACK",
+               AgSvcEnqueue(AgSvcTextRespondsAgain(c, (long)(now - g_svc_live_since)), "LIVE_BACK",
                             0, 0, (long)now, 0, AgSvcTakeHeld("LIVE_BACK"));
            }
          g_svc_alerted = false;
@@ -710,7 +973,7 @@ void AgSvcLiveness(const int live, const double hb, const double id, const datet
       if(now - g_svc_started >= AG_SVC_START_GRACE)
         {
          g_svc_alerted = true;
-         AgSvcEnqueue(AgTgTextNotRunning(c, (long)(now - g_svc_started)), "LIVE_NONE", 0, 0, (long)now, 0, 0);
+         AgSvcEnqueue(AgSvcTextNotRunning(c, (long)(now - g_svc_started)), "LIVE_NONE", 0, 0, (long)now, 0, 0);
         }
       return;
      }
@@ -722,14 +985,14 @@ void AgSvcLiveness(const int live, const double hb, const double id, const datet
       if(has_stop || now - g_svc_live_since < AG_SVC_RELEASE_GRACE)
          return;
       g_svc_alerted = true;
-      AgSvcEnqueue(AgTgTextNotResponding(c, (long)((double)now - g_svc_last_fresh_hb), true, g_svc_ping_on),
+      AgSvcEnqueue(AgSvcTextNotResponding(c, (long)((double)now - g_svc_last_fresh_hb), true, g_svc_ping_on),
                    "LIVE_STOP", 0, 0, (long)now, 0, 0);
       return;
      }
    //--- stale or missing after it ran: at once
    g_svc_alerted = true;
    double since = (live == AG_SVC_LIVE_STALE) ? hb : g_svc_last_fresh_hb;
-   AgSvcEnqueue(AgTgTextNotResponding(c, (long)((double)now - since), false, g_svc_ping_on),
+   AgSvcEnqueue(AgSvcTextNotResponding(c, (long)((double)now - since), false, g_svc_ping_on),
                 "LIVE_STOP", 0, 0, (long)now, 0, 0);
   }
 
@@ -766,11 +1029,11 @@ void AgSvcReportRefusal()
       //--- the live instance runs on: its state, the day's result not computed
       AgSvcCommonNow(c, g_svc_live == AG_SVC_LIVE_FRESH);
       c.pnl_mode = AG_TG_PNL_NONE;
-      AgSvcEnqueue(AgTgTextS3Second(c), "S3", 0, 0, g_svc_refusal_local, 0, 0);
+      AgSvcEnqueue(AgSvcTextS3Second(c), "S3", 0, 0, g_svc_refusal_local, 0, 0);
       return;
      }
    AgSvcCommonNow(c, false);
-   AgSvcEnqueue(AgTgTextS3Refused(c), "S3", 0, 0, g_svc_refusal_local, 0, 0);
+   AgSvcEnqueue(AgSvcTextS3Refused(c), "S3", 0, 0, g_svc_refusal_local, 0, 0);
   }
 
 //+------------------------------------------------------------------+
@@ -793,7 +1056,7 @@ string AgSvcStatusText(const datetime now)
      }
    else if(live == AG_SVC_LIVE_STALE)
       hb_age = (long)((double)now - hb);
-   return AgTgTextStatus(c, hb_age, data_age, g_svc_have_snap ? (datetime)g_svc_snap.locked_until : 0);
+   return AgSvcTextStatus(c, hb_age, data_age, g_svc_have_snap ? (datetime)g_svc_snap.locked_until : 0);
   }
 
 //--- TG-15 (A): the local clock's 4 hour slots; a slot missed while the
@@ -886,7 +1149,7 @@ bool AgSvcSendText(const string text, const long seq, const string cls, const in
 bool AgSvcSendFirst(const datetime now, const int timeout_ms)
   {
    long delay = (long)now - g_out_local[0];
-   string text = AgTgFinish(g_out_text[0], g_out_notkept[0], g_out_heldback[0],
+   string text = AgSvcFinish(g_out_text[0], g_out_notkept[0], g_out_heldback[0],
                             delay > AG_SVC_DELAY_SECONDS ? delay : 0, AgSvcBuildLineOf(g_out_cls[0]));
    if(!AgSvcSendText(text, g_out_seq[0], g_out_cls[0], timeout_ms, now))
       return false;
@@ -931,7 +1194,7 @@ void AgSvcPoll(const datetime now)
    long max_id  = -1;
    int  ignored = 0;
    bool ok      = false;
-   int  matched = AgTgMatchCommands(answer, AgTgCommandText(), TelegramChatId, (long)TimeGMT(),
+   int  matched = AgTgMatchCommandAny(answer, g_svc_commands, g_svc_command_count, TelegramChatId, (long)TimeGMT(),
                                     AG_SVC_COMMAND_MAX_AGE, max_id, ignored, ok);
    if(!ok)
      {
@@ -956,7 +1219,7 @@ void AgSvcNetwork(const datetime now)
      {
       AgTgCommon c;
       AgSvcCommonNow(c, g_svc_live == AG_SVC_LIVE_FRESH);
-      string text = AgTgFinish(AgTgTextS11(c, g_svc_fail_since, now, g_out_count), 0, 0, 0, AgSvcBuildLineOf("S11"));
+      string text = AgSvcFinish(AgSvcTextS11(c, g_svc_fail_since, now, g_out_count), 0, 0, 0, AgSvcBuildLineOf("S11"));
       if(AgSvcSendText(text, 0, "S11", AG_SVC_TIMEOUT_MS, now))
          g_svc_fail_since = 0;
       return;
@@ -1053,7 +1316,7 @@ void AgSvcFinalPass()
       if(e.code != AG_TG_S2 || (int)e.x[0] != 9 || e.seq <= g_svc_ack)
          continue;
       long delay = (long)now - e.local_t;
-      string text = AgTgFinish(AgSvcRender(e), 0, 0, delay > AG_SVC_DELAY_SECONDS ? delay : 0, AgSvcBuildLineOf("S2"));
+      string text = AgSvcFinish(AgSvcRender(e), 0, 0, delay > AG_SVC_DELAY_SECONDS ? delay : 0, AgSvcBuildLineOf("S2"));
       //--- acknowledged only when nothing older waits, so nothing is skipped;
       //--- one attempt, as TG-13 (B) has it, so no plain text second request:
       //--- a 400 leaves the stop queued for the next start, which sends it
@@ -1085,7 +1348,14 @@ void OnStart()
       AgWarn("alerts config|TelegramChatId is malformed, Telegram is off; the guardian is unaffected");
    if(!url_empty && !url_ok)
       AgWarn("alerts config|NetworkHeartbeatUrl is malformed, the network heartbeat is off; the guardian is unaffected");
+   //--- the language, read once: a value outside the list reads as English and Telegram stays on
+   bool language_known = false;
+   g_svc_hebrew = (AgTgLanguageOf((int)TelegramLanguage, language_known) == AG_TG_LANG_HEBREW);
+   if(!language_known)
+      AgWarn("alerts config|TelegramLanguage is not a known value, English is used; Telegram stays on");
+   g_svc_command_count = AgTgAllCommandTexts(g_svc_commands);
    AgInfo(AgTgServiceStartedLine(AG_SVC_BUILD_LABEL, login, telegram, heartbeat, g_svc_cmd_on ? "on" : "off"));
+   AgInfo("alerts language|set=" + (g_svc_hebrew ? "he" : "en"));
 
    while(!IsStopped())
      {

@@ -19,6 +19,15 @@
 #define AG_JSON_NULL   5
 #define AG_JSON_MAX_DEPTH 32
 
+//--- one of the accepted texts of the command, compared whole, no trimming or folding
+bool AgTgIsCommandText(const string text, const string &commands[], const int command_count)
+  {
+   for(int k = 0; k < command_count; k++)
+      if(text == commands[k])
+         return true;
+   return false;
+  }
+
 //+------------------------------------------------------------------+
 //| Escaping for a JSON string value. Quote, backslash and control   |
 //| characters are escaped; every other character, Hebrew and the    |
@@ -329,7 +338,8 @@ int AgJsonFind(const string &paths[], const int count, const string path)
 //| is the highest update_id seen, -1 when there is none. ok is false |
 //| when the answer does not parse or does not read "ok":true.        |
 //+------------------------------------------------------------------+
-int AgTgMatchCommands(const string answer, const string command, const string chat_id,
+int AgTgMatchCommandAny(const string answer, const string &commands[], const int command_count,
+                        const string chat_id,
                       const long now_gmt, const int max_age, long &max_id, int &ignored, bool &ok)
   {
    max_id  = -1;
@@ -363,7 +373,7 @@ int AgTgMatchCommands(const string answer, const string command, const string ch
                        && kinds[text_at] == AG_JSON_STRING
                        && kinds[date_at] == AG_JSON_NUMBER
                        && values[chat_at] == chat_id
-                       && values[text_at] == command);
+                       && AgTgIsCommandText(values[text_at], commands, command_count));
       if(is_match)
         {
          long date = StringToInteger(values[date_at]);
@@ -375,6 +385,15 @@ int AgTgMatchCommands(const string answer, const string command, const string ch
          ignored++;
      }
    return matched;
+  }
+
+//--- the one text form, kept for the vectors of the Hebrew command
+int AgTgMatchCommands(const string answer, const string command, const string chat_id,
+                      const long now_gmt, const int max_age, long &max_id, int &ignored, bool &ok)
+  {
+   string commands[1];
+   commands[0] = command;
+   return AgTgMatchCommandAny(answer, commands, 1, chat_id, now_gmt, max_age, max_id, ignored, ok);
   }
 
 //--- parameters.retry_after of a 429 answer, 0 when absent
@@ -452,6 +471,21 @@ bool AgTgPingUrlValid(const string u)
          return false;
      }
    return true;
+  }
+
+//--- the language of the alert texts, the one list input TelegramLanguage of the service
+enum ENUM_AG_TG_LANGUAGE
+  {
+   AG_TG_LANG_ENGLISH = 0,   // English
+   AG_TG_LANG_HEBREW  = 1    // Hebrew
+  };
+
+//--- the language a raw input value stands for; a value outside the list reads as
+//--- English and is reported through known, so a typing slip can never silence Telegram
+int AgTgLanguageOf(const int raw, bool &known)
+  {
+   known = (raw == AG_TG_LANG_ENGLISH || raw == AG_TG_LANG_HEBREW);
+   return (raw == AG_TG_LANG_HEBREW) ? AG_TG_LANG_HEBREW : AG_TG_LANG_ENGLISH;
   }
 
 //--- how a channel reads on the start line: on, off:empty or off:malformed
